@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- REMOVED: Cross-Origin-Opener-Policy header that was causing Google Sign-in issues -->
+    <title>Class Attendance</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+        
+        .status.loading {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+            border: 1px solid #ffcdd2;
+        }
+        
+        .status.success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        
+        .location-info {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .google-signin {
+            margin: 20px 0;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .debug-info {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 11px;
+            color: #666;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">📍</div>
+        <h1>Class Attendance</h1>
+        <p class="subtitle">Scan QR code to mark your attendance</p>
+        
+        <div id="status" class="status loading">
+            <div class="spinner"></div>
+            Checking your location...
+        </div>
+        
+        <div id="location-info" class="location-info hidden">
+            <strong>Your Location:</strong><br>
+            <span id="user-coords"></span><br>
+            <strong>Distance from classroom:</strong> <span id="distance"></span>m
+        </div>
+        
+        <div id="debug-info" class="debug-info hidden">
+            <strong>Debug Info:</strong><br>
+            <span id="debug-text"></span>
+        </div>
+        
+        <div id="google-signin" class="google-signin hidden">
+            <div id="g_id_onload"
+                 data-client_id="YOUR_GOOGLE_CLIENT_ID"
+                 data-context="signin"
+                 data-ux_mode="popup"
+                 data-callback="handleCredentialResponse"
+                 data-auto_prompt="false">
+            </div>
+            <div class="g_id_signin"
+                 data-type="standard"
+                 data-shape="rectangular"
+                 data-theme="outline"
+                 data-text="signin_with"
+                 data-size="large"
+                 data-logo_alignment="left">
+            </div>
+        </div>
+        
+        <button id="retry-btn" class="btn hidden" onclick="checkLocation()">
+            Try Again
+        </button>
+        
+        <button id="test-backend" class="btn" onclick="testBackend()" style="margin-top: 10px; font-size: 12px; padding: 8px 16px;">
+            Test Backend Connection
+        </button>
+    </div>
+
+    <script>
+        // CONFIGURATION - Update these values
+        const CONFIG = {
+            // Classroom coordinates (update these for your classroom)
+            CLASSROOM_LAT: 11.028361,   // Example: New York latitude
+            CLASSROOM_LNG: 77.044202, // Example: New York longitude
+            ALLOWED_RADIUS: 50,      // meters
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbw2uroclaeXeKy3yMky74BqWTcewfhcX3q1kzd9FNselxWRJsT1qqopunebIudID8bn/exec', // UPDATE THIS WITH NEW URL
+            GOOGLE_CLIENT_ID: '555516377611-pf7dck7mlc3qpcnc8vpgcibcr22f23uf.apps.googleusercontent.com' // Update this
+        };
+        
+        let userLocation = null;
+        
+        // Initialize on page load
+        window.onload = function() {
+            checkLocation();
+            // Show debug info for testing
+            document.getElementById('debug-info').classList.remove('hidden');
+            updateDebugInfo('Page loaded, starting location check...');
+        };
+        
+        function updateDebugInfo(message) {
+            const debugEl = document.getElementById('debug-text');
+            const timestamp = new Date().toLocaleTimeString();
+            debugEl.innerHTML += `<br>[${timestamp}] ${message}`;
+        }
+        
+        function checkLocation() {
+            const statusEl = document.getElementById('status');
+            const locationInfoEl = document.getElementById('location-info');
+            const googleSigninEl = document.getElementById('google-signin');
+            const retryBtnEl = document.getElementById('retry-btn');
+            
+            // Reset UI
+            statusEl.className = 'status loading';
+            statusEl.innerHTML = '<div class="spinner"></div>Checking your location...';
+            locationInfoEl.classList.add('hidden');
+            googleSigninEl.classList.add('hidden');
+            retryBtnEl.classList.add('hidden');
+            
+            updateDebugInfo('Starting location check...');
+            
+            if (!navigator.geolocation) {
+                showError('Geolocation is not supported by this browser.');
+                updateDebugInfo('Geolocation not supported');
+                return;
+            }
+            
+            navigator.geolocation.getCurrentPosition(
+                handleLocationSuccess,
+                handleLocationError,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 60000
+                }
+            );
+        }
+        
+        function handleLocationSuccess(position) {
+            userLocation = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+            };
+            
+            updateDebugInfo(`Location obtained: ${userLocation.lat}, ${userLocation.lng}`);
+            
+            const distance = calculateDistance(
+                userLocation.lat, 
+                userLocation.lng,
+                CONFIG.CLASSROOM_LAT,
+                CONFIG.CLASSROOM_LNG
+            );
+            
+            updateDebugInfo(`Distance calculated: ${Math.round(distance)}m`);
+            
+            // Update location info
+            document.getElementById('user-coords').textContent = 
+                `${userLocation.lat.toFixed(6)}, ${userLocation.lng.toFixed(6)}`;
+            document.getElementById('distance').textContent = Math.round(distance);
+            document.getElementById('location-info').classList.remove('hidden');
+            
+            if (distance <= CONFIG.ALLOWED_RADIUS) {
+                showSuccess('✅ You are in the classroom! Please sign in with your Gmail.');
+                document.getElementById('google-signin').classList.remove('hidden');
+                updateDebugInfo('Within allowed radius - showing sign in');
+            } else {
+                showError(`❌ You are too far from the classroom (${Math.round(distance)}m away). You must be within ${CONFIG.ALLOWED_RADIUS}m to mark attendance.`);
+                document.getElementById('retry-btn').classList.remove('hidden');
+                updateDebugInfo('Outside allowed radius');
+            }
+        }
+        
+        function handleLocationError(error) {
+            let message = 'Unable to get your location. ';
+            
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    message += 'Please allow location access and try again.';
+                    updateDebugInfo('Location permission denied');
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message += 'Location information is unavailable.';
+                    updateDebugInfo('Location unavailable');
+                    break;
+                case error.TIMEOUT:
+                    message += 'Location request timed out.';
+                    updateDebugInfo('Location timeout');
+                    break;
+                default:
+                    message += 'An unknown error occurred.';
+                    updateDebugInfo('Unknown location error');
+                    break;
+            }
+            
+            showError(message);
+            document.getElementById('retry-btn').classList.remove('hidden');
+        }
+        
+        function calculateDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371e3; // Earth's radius in meters
+            const φ1 = lat1 * Math.PI/180; // φ, λ in radians
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lng2-lng1) * Math.PI/180;
+            
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            
+            return R * c; // Distance in meters
+        }
+        
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = `status ${type}`;
+            statusEl.innerHTML = message;
+        }
+        
+        function showError(message) {
+            showStatus(message, 'error');
+        }
+        
+        function showSuccess(message) {
+            showStatus(message, 'success');
+        }
+        
+        function showLoading(message) {
+            showStatus(`<div class="spinner"></div>${message}`, 'loading');
+        }
+        
+        // Test backend connection
+        async function testBackend() {
+            updateDebugInfo('Testing backend connection...');
+            
+            try {
+                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                
+                updateDebugInfo(`Backend response status: ${response.status}`);
+                
+                const data = await response.json();
+                updateDebugInfo(`Backend response: ${JSON.stringify(data)}`);
+                
+                if (data.success) {
+                    showSuccess('✅ Backend connection successful!');
+                } else {
+                    showError('❌ Backend returned error');
+                }
+                
+            } catch (error) {
+                updateDebugInfo(`Backend error: ${error.message}`);
+                showError('❌ Cannot connect to backend');
+                console.error('Backend test error:', error);
+            }
+        }
+        
+        // Google Sign-In callback
+        function handleCredentialResponse(response) {
+            showLoading('Marking attendance...');
+            updateDebugInfo('Google sign-in successful, submitting attendance...');
+            
+            // Decode JWT token to get user info
+            const payload = JSON.parse(atob(response.credential.split('.')[1]));
+            const userEmail = payload.email;
+            const userName = payload.name;
+            
+            updateDebugInfo(`User: ${userName} (${userEmail})`);
+            
+            // Send attendance data to backend
+            submitAttendance(userEmail, userName);
+        }
+        
+        async function submitAttendance(email, name) {
+            try {
+                const attendanceData = {
+                    email: email,
+                    name: name,
+                    lat: userLocation.lat,
+                    lng: userLocation.lng,
+                    timestamp: new Date().toISOString()
+                };
+                
+                updateDebugInfo(`Submitting data: ${JSON.stringify(attendanceData)}`);
+                
+                const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(attendanceData)
+                });
+                
+                updateDebugInfo(`Submit response status: ${response.status}`);
+                
+                const result = await response.json();
+                updateDebugInfo(`Submit response: ${JSON.stringify(result)}`);
+                
+                if (result.success) {
+                    showSuccess(`🎉 Attendance marked successfully!<br><strong>${name}</strong><br>Time: ${new Date().toLocaleString()}`);
+                    
+                    // Hide sign-in button after successful submission
+                    document.getElementById('google-signin').classList.add('hidden');
+                } else {
+                    throw new Error(result.message || 'Failed to submit attendance');
+                }
+            } catch (error) {
+                console.error('Error submitting attendance:', error);
+                updateDebugInfo(`Submit error: ${error.message}`);
+                showError('❌ Failed to mark attendance. Please try again.');
+                document.getElementById('google-signin').classList.remove('hidden');
+            }
+        }
+        
+        // Update Google Client ID in the DOM
+        document.getElementById('g_id_onload').setAttribute('data-client_id', CONFIG.GOOGLE_CLIENT_ID);
+    </script>
+</body>
+</html>
